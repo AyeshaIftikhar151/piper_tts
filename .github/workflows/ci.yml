@@ -33,6 +33,8 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+        run: pip install pytest pytest-asyncio httpx
+
 
       - name: Run tests
         env:
