@@ -1,0 +1,227 @@
+version: "3.9"
+
+# ============================================================
+# docker-compose.yml — Full Production Stack (FIXED)
+# ============================================================
+# Fix: added shared named volume  tts_audio_data  mounted at
+#      /tmp/tts_audio on ALL workers AND both API instances.
+#
+#      Without this, each worker wrote WAV files to its own
+#      container-local /tmp/tts_audio, which the API containers
+#      could not see → HTTP 410 on every download request.
+# ============================================================
+
+x-common-env: &common-env
+  ENV:                  prod
+  REDIS_URL:            redis://redis:6379/0
+  CELERY_BROKER_URL:    redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  DEVICE:               cpu
+  STORAGE_BACKEND:      local
+  STORAGE_LOCAL_TMP_DIR: /tmp/tts_audio
+  OBSERVABILITY_LOG_LEVEL:  INFO
+  OBSERVABILITY_LOG_FORMAT: json
+  OBSERVABILITY_METRICS_ENABLED: "true"
+  MODELS_DIR:           /app/piper_models
+  SECURITY_CORS_ORIGINS: '["http://localhost:3000","http://localhost:8501"]'
+
+# ── Shared-volume shorthand ────────────────────────────────────────
+# All services that need to read or write audio files get this mount.
+x-audio-volume: &audio-volume
+  - tts_audio_data:/tmp/tts_audio
+
+services:
+
+  # ── Redis ──────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── MinIO (optional — leave in for future S3 use) ──────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER:     ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── FastAPI instance 1 ─────────────────────────────────────
+  tts-api-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: "8000"
+    # FIX: API must share the same audio volume as the workers
+    volumes: *audio-volume
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+
+  # ── FastAPI instance 2 ─────────────────────────────────────
+  tts-api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      PORT: "8000"
+    # FIX: API must share the same audio volume as the workers
+    volumes: *audio-volume
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 5
+
+  # ── Celery worker 1 ────────────────────────────────────────
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      CELERY_WORKER_CONCURRENCY: "1"
+      CELERY_WORKER_MAX_RAM_MB:  "4000"
+    volumes:
+      - ./piper_models:/app/piper_models
+      # FIX: workers write here; API instances read from same volume
+      - tts_audio_data:/tmp/tts_audio
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+
+  # ── Celery worker 2 ────────────────────────────────────────
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      CELERY_WORKER_CONCURRENCY: "1"
+      CELERY_WORKER_MAX_RAM_MB:  "4000"
+    volumes:
+      - ./piper_models:/app/piper_models
+      # FIX: same shared volume
+      - tts_audio_data:/tmp/tts_audio
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 5G
+
+  # ── Celery Beat ────────────────────────────────────────────
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+    command: >
+      celery -A worker.celery_app beat
+      --loglevel=info
+      --scheduler celery.beat:PersistentScheduler
+    volumes:
+      - beat_data:/app/beat
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── Nginx ──────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      tts-api-1:
+        condition: service_healthy
+      tts-api-2:
+        condition: service_healthy
+
+  # ── Prometheus ─────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+
+  # ── Grafana ────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP:     "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  redis_data:
+  minio_data:
+  # FIX: new shared volume — all workers + API instances mount this
+  tts_audio_data:
+  beat_data:
+  prometheus_data:
+  grafana_data:

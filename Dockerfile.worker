@@ -1,0 +1,56 @@
+# ============================================================
+# Dockerfile.worker — Celery synthesis worker
+# Heavy: loads all 6 Piper models (~3.5 GB RAM per process)
+# Uses concurrency=1 to prevent RAM overflow
+#
+# Volume ownership fix:
+#   The entrypoint script runs as root, fixes /tmp/tts_audio
+#   ownership, then exec's the CMD as the worker user.
+#   This is required because Docker named volumes are created
+#   as root — without this chown, the worker user (uid 1000)
+#   cannot write WAV files to the shared volume.
+# ============================================================
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    espeak-ng \
+    ffmpeg \
+    curl \
+    su-exec \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Copy entrypoint BEFORE switching user so we can chmod it as root
+COPY scripts/worker-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Create directories as root while we still can
+RUN mkdir -p /app/piper_models /tmp/tts_audio
+
+# Create worker user and own the app directory
+# NOTE: we do NOT chown /tmp/tts_audio here — the Docker volume
+#       mount will replace this directory at runtime (owned by root).
+#       The entrypoint script fixes ownership at container start.
+RUN useradd -m -u 1000 worker && chown -R worker:worker /app
+
+# Stay as root so the entrypoint can run chown at startup.
+# The entrypoint will drop to the worker user via su-exec / gosu
+# before starting Celery. See worker-entrypoint.sh.
+# We do NOT set USER worker here — entrypoint handles the switch.
+
+# concurrency=1  = one task at a time = predictable RAM usage
+# --without-heartbeat  = reduce Redis chatter
+# -O fair  = fair task scheduling
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["celery", "-A", "worker.celery_app", "worker", \
+     "--concurrency=1", \
+     "--loglevel=info", \
+     "--without-heartbeat", \
+     "-O", "fair", \
+     "-Q", "celery"]

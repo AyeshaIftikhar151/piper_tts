@@ -1,0 +1,22 @@
+# observability/prometheus/prometheus.yml
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    service: piper-tts
+
+scrape_configs:
+  - job_name: tts-api
+    static_configs:
+      - targets:
+          - tts-api-1:8000
+          - tts-api-2:8000
+    metrics_path: /metrics
+
+ # - job_name: redis
+  #  static_configs:
+   #   - targets: [redis:6379]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

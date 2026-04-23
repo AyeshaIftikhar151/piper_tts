@@ -1,0 +1,44 @@
+# ============================================================
+# requirements.txt — Piper TTS Scalable Stack
+# ============================================================
+
+# ── FastAPI stack ──────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ── Pydantic ───────────────────────────────────────────────
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# ── Celery + Redis ─────────────────────────────────────────
+celery[redis]
+redis
+
+# ── TTS engine ─────────────────────────────────────────────
+piper-tts
+onnxruntime
+
+# ── Audio processing ───────────────────────────────────────
+scipy
+soundfile
+numpy
+
+# ── Memory monitoring ──────────────────────────────────────
+psutil
+
+# ── Dev / tooling ──────────────────────────────────────────
+python-dotenv
+
+# ── Storage (MinIO/S3) ─────────────────────────────────────
+boto3
+
+# ── Observability ──────────────────────────────────────────
+prometheus-client
+
+# ── Memory monitoring ──────────────────────────────────────
+psutil
+
+# ── Security ───────────────────────────────────────────────
+python-jose[cryptography]
+passlib[bcrypt]

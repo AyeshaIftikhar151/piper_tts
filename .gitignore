@@ -1,0 +1,64 @@
+# ── Secrets — NEVER commit these ──────────────────────────
+.env
+.env.local
+.env.production
+.env.staging
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# ── Virtual environments ────────────────────────────────────
+venv/
+env/
+.venv/
+.conda/
+
+# ── Piper models (large binaries — downloaded at runtime) ───
+piper_models/
+*.onnx
+*.onnx.json
+
+# ── Audio files (temporary, auto-deleted by beat task) ──────
+*.wav
+*.mp3
+
+# ── Docker local volumes ────────────────────────────────────
+redis_data/
+minio_data/
+beat_data/
+prometheus_data/
+grafana_data/
+
+# ── IDE ─────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+
+# ── OS ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Logs ────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Test artifacts ──────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Celery beat schedule ────────────────────────────────────
+celerybeat-schedule
+celerybeat.pid
