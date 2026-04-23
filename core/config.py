@@ -127,10 +127,10 @@ class Settings(BaseSettings):
     APP_VERSION: str = "3.0.0"
     ENV:         Environment = Environment.DEV
     DEBUG:       bool = False
-
+    
     HOST: str = "0.0.0.0"
     PORT: int = 8000
-
+    AUDIO_TTL_SECONDS: int = 600  # 10 minutes
     MODELS_DIR:      Path = Path("./piper_models")
     MAX_TEXT_LENGTH: int  = 10_000
     DEVICE:          str  = "cpu"
